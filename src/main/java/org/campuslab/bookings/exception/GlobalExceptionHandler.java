@@ -2,6 +2,7 @@ package org.campuslab.bookings.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -16,6 +17,19 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    // Acceso denegado por Spring Security (ej: @PreAuthorize rechazó el rol) -> 403
+    // Sin este handler, la excepción caería en el 500 genérico y devolveríamos un error falso.
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    // Reglas de negocio violadas (fechas inválidas, estado que no existe) -> 400
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
 
     // Error interno: {"timestamp": ..., "status": 500, "message": "..."}
     @ExceptionHandler(Exception.class)

@@ -2,7 +2,6 @@ package org.campuslab.bookings;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.ComponentScan;
 
 /**
  * Bookings Service Application
@@ -17,8 +16,9 @@ import org.springframework.context.annotation.ComponentScan;
  * - Publicación de comandos a RabbitMQ (email, preparación, voucher)
  * - Persistencia en PostgreSQL
  */
+// Nota: sin @ComponentScan explícito. @SpringBootApplication ya escanea este paquete,
+// y el scan manual rompería los filtros de los tests de slice (@WebMvcTest).
 @SpringBootApplication
-@ComponentScan(basePackages = "org.campuslab.bookings")
 public class BookingsServiceApplication {
 
     public static void main(String[] args) {
