@@ -11,7 +11,7 @@ services:
       POSTGRES_USER: campuslab
       POSTGRES_PASSWORD: campuslab
     ports:
-      - "5432:5432"   # puerto estándar de PostgreSQL
+      - "${BOOKINGS_DB_PORT:-5432}:5432"   # si 5432 está ocupado: BOOKINGS_DB_PORT=5433 docker compose up -d
     volumes:
       - bookings_pgdata:/var/lib/postgresql/data   # persiste la data entre reinicios
     healthcheck:
