@@ -1,0 +1,24 @@
+# Dependencias locales para desarrollar ms-campuslab-bookings.
+# Uso: docker compose up -d
+# Solo levanta PostgreSQL; RabbitMQ y Kafka viven en el repo /infra.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bookings-postgres
+    environment:
+      POSTGRES_DB: bookings_db
+      POSTGRES_USER: campuslab
+      POSTGRES_PASSWORD: campuslab
+    ports:
+      - "${BOOKINGS_DB_PORT:-5432}:5432"   # si 5432 está ocupado: BOOKINGS_DB_PORT=5433 docker compose up -d
+    volumes:
+      - bookings_pgdata:/var/lib/postgresql/data   # persiste la data entre reinicios
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campuslab -d bookings_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  bookings_pgdata:

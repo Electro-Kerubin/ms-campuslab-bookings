@@ -1,0 +1,68 @@
+# Configuración del microservicio de reservas
+spring:
+  application:
+    name: ms-campuslab-bookings
+
+  # --- Base de datos PostgreSQL ---
+  datasource:
+    # preferQueryMode=simple: evita que el driver de PostgreSQL falle con
+    # "could not determine data type of parameter $N" en consultas JPQL con
+    # filtros opcionales del tipo "(:param IS NULL OR columna = :param)",
+    # donde el protocolo extendido (prepared statements) no logra inferir
+    # el tipo del bind param cuando solo aparece en el chequeo IS NULL.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bookings_db}?preferQueryMode=simple
+    username: ${DB_USER:campuslab}
+    password: ${DB_PASSWORD:campuslab}
+
+  jpa:
+    hibernate:
+      # Flyway crea las tablas; Hibernate solo verifica que coincidan con las entidades
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  # --- Migraciones Flyway ---
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # --- Kafka: publicamos eventos en bookings.events ---
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        # Si el broker no está disponible, KafkaProducer.send() bloquea por
+        # defecto hasta 60s (max.block.ms) esperando metadata antes de
+        # fallar. Lo bajamos a 3s para que, en dev sin Kafka levantado, el
+        # error de publicación de evento se resuelva rápido en vez de colgar
+        # la request de creación/actualización de la reserva.
+        max.block.ms: 3000
+      # Serializamos el envelope a JSON
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+  # --- RabbitMQ: publicamos comandos a las colas cmd.* ---
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:campuslab}
+    password: ${RABBITMQ_PASSWORD:campuslab}
+
+  # --- Seguridad: validación del JWT emitido por Azure AD ---
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Se configura por variable de entorno (TENANT_ID de Azure AD)
+          issuer-uri: https://login.microsoftonline.com/${TENANT_ID:changeme}/v2.0
+
+# Puerto del servicio (el BFF usa 8080; cada microservicio toma uno distinto)
+server:
+  port: ${SERVER_PORT:8081}
+
+# Logs informativos para desarrollo
+logging:
+  level:
+    org.campuslab.bookings: INFO
