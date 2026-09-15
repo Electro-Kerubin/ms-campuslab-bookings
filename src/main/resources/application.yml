@@ -5,7 +5,12 @@ spring:
 
   # --- Base de datos PostgreSQL ---
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bookings_db}
+    # preferQueryMode=simple: evita que el driver de PostgreSQL falle con
+    # "could not determine data type of parameter $N" en consultas JPQL con
+    # filtros opcionales del tipo "(:param IS NULL OR columna = :param)",
+    # donde el protocolo extendido (prepared statements) no logra inferir
+    # el tipo del bind param cuando solo aparece en el chequeo IS NULL.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:bookings_db}?preferQueryMode=simple
     username: ${DB_USER:campuslab}
     password: ${DB_PASSWORD:campuslab}
 
