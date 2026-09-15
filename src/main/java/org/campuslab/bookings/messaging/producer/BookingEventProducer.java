@@ -25,6 +25,11 @@ public class BookingEventProducer {
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     // Publica un evento del tipo "BOOKING_<NUEVO_ESTADO>" con los datos de la reserva
+    //
+    // Best-effort: si Kafka no está disponible (dev local sin el broker
+    // levantado, o una caída puntual), NO debe tumbar la operación de
+    // negocio que lo dispara (crear/cambiar estado de una reserva). Kafka
+    // es la fuente de verdad para report/audit, no para bookings mismo.
     public void publishBookingEvent(Booking booking, BookingStatus nuevoEstado) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("bookingId", booking.getId());
@@ -36,10 +41,21 @@ public class BookingEventProducer {
 
         EventEnvelope envelope = EventEnvelope.of("BOOKING_" + nuevoEstado.name(), payload);
 
-        // Usamos el bookingId como clave para que todos los eventos
-        // de una misma reserva caigan en la misma partición (orden garantizado).
-        kafkaTemplate.send(TOPIC, String.valueOf(booking.getId()), envelope);
-
-        log.info("Evento Kafka enviado a {}: type={}, bookingId={}", TOPIC, envelope.type(), booking.getId());
+        try {
+            // Usamos el bookingId como clave para que todos los eventos
+            // de una misma reserva caigan en la misma partición (orden garantizado).
+            kafkaTemplate.send(TOPIC, String.valueOf(booking.getId()), envelope)
+                    .exceptionally(ex -> {
+                        log.warn("No se pudo publicar evento Kafka (bookingId={}, type={}): {}",
+                                booking.getId(), envelope.type(), ex.getMessage());
+                        return null;
+                    });
+            log.info("Evento Kafka encolado en {}: type={}, bookingId={}", TOPIC, envelope.type(), booking.getId());
+        } catch (Exception ex) {
+            // send() puede lanzar de forma síncrona (ej: no logra obtener
+            // metadata del cluster dentro de max.block.ms).
+            log.warn("No se pudo encolar evento Kafka (bookingId={}, type={}): {}",
+                    booking.getId(), envelope.type(), ex.getMessage());
+        }
     }
 }

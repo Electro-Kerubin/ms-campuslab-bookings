@@ -59,8 +59,16 @@ public class BookingCommandProducer {
     }
 
     // Método común: envuelve el payload en el envelope y publica al exchange
+    //
+    // Best-effort: igual que con Kafka, si RabbitMQ no está disponible no
+    // debe tumbar el cambio de estado de la reserva que lo disparó.
     private void publish(String routingKey, EventEnvelope envelope) {
-        rabbitTemplate.convertAndSend(EXCHANGE, routingKey, envelope);
-        log.info("Comando RabbitMQ enviado a {} con routingKey={}", EXCHANGE, routingKey);
+        try {
+            rabbitTemplate.convertAndSend(EXCHANGE, routingKey, envelope);
+            log.info("Comando RabbitMQ enviado a {} con routingKey={}", EXCHANGE, routingKey);
+        } catch (Exception ex) {
+            log.warn("No se pudo enviar comando RabbitMQ a {} con routingKey={}: {}",
+                    EXCHANGE, routingKey, ex.getMessage());
+        }
     }
 }

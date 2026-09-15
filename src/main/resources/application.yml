@@ -33,6 +33,13 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        # Si el broker no está disponible, KafkaProducer.send() bloquea por
+        # defecto hasta 60s (max.block.ms) esperando metadata antes de
+        # fallar. Lo bajamos a 3s para que, en dev sin Kafka levantado, el
+        # error de publicación de evento se resuelva rápido en vez de colgar
+        # la request de creación/actualización de la reserva.
+        max.block.ms: 3000
       # Serializamos el envelope a JSON
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
