@@ -41,49 +41,44 @@ public class RabbitTopologyConfig {
     }
 
     // ---------- Colas principales (con DLX configurado) ----------
+    //
+    // OJO: ms-campuslab-notify declara estas mismas colas (RabbitMQConfig). RabbitMQ rechaza
+    // redeclarar una cola con argumentos distintos (PRECONDITION_FAILED), así que los
+    // argumentos (TTL, largo, DLX, routing keys) deben ser idénticos en los dos servicios.
 
     // Email/push al estudiante
     @Bean
     public Queue emailQueue() {
-        return QueueBuilder.durable("q.cmd.email")
-                .deadLetterExchange("cmd.dead.dlx") // si falla, va a la DLQ
-                .deadLetterRoutingKey("email.send")
-                .build();
+        return mainQueue("q.cmd.email", "email.dlq");
     }
 
     // Ticket de preparación de sala/equipo para el técnico
     @Bean
     public Queue prepQueue() {
-        return QueueBuilder.durable("q.cmd.prep")
-                .deadLetterExchange("cmd.dead.dlx")
-                .deadLetterRoutingKey("prep.ticket")
-                .build();
+        return mainQueue("q.cmd.prep", "prep.dlq");
     }
 
     // Generación de PDF (vale de retiro / acta de devolución)
     @Bean
     public Queue voucherQueue() {
-        return QueueBuilder.durable("q.cmd.voucher")
-                .deadLetterExchange("cmd.dead.dlx")
-                .deadLetterRoutingKey("voucher.gen")
-                .build();
+        return mainQueue("q.cmd.voucher", "voucher.dlq");
     }
 
     // ---------- Colas DLQ (destino final de los mensajes fallidos) ----------
 
     @Bean
     public Queue emailDlq() {
-        return QueueBuilder.durable("q.cmd.email.dlq").build();
+        return deadLetterQueue("q.cmd.email.dlq");
     }
 
     @Bean
     public Queue prepDlq() {
-        return QueueBuilder.durable("q.cmd.prep.dlq").build();
+        return deadLetterQueue("q.cmd.prep.dlq");
     }
 
     @Bean
     public Queue voucherDlq() {
-        return QueueBuilder.durable("q.cmd.voucher.dlq").build();
+        return deadLetterQueue("q.cmd.voucher.dlq");
     }
 
     // ---------- Bindings: cada cola se une a los dos exchanges ----------
@@ -124,16 +119,36 @@ public class RabbitTopologyConfig {
     // DLQs hacia el exchange de dead letters
     @Bean
     public Binding emailDlqBinding() {
-        return BindingBuilder.bind(emailDlq()).to(deadLetterExchange()).with("email.send");
+        return BindingBuilder.bind(emailDlq()).to(deadLetterExchange()).with("email.dlq");
     }
 
     @Bean
     public Binding prepDlqBinding() {
-        return BindingBuilder.bind(prepDlq()).to(deadLetterExchange()).with("prep.ticket");
+        return BindingBuilder.bind(prepDlq()).to(deadLetterExchange()).with("prep.dlq");
     }
 
     @Bean
     public Binding voucherDlqBinding() {
-        return BindingBuilder.bind(voucherDlq()).to(deadLetterExchange()).with("voucher.gen");
+        return BindingBuilder.bind(voucherDlq()).to(deadLetterExchange()).with("voucher.dlq");
+    }
+
+    // ---------- Políticas de retención ----------
+
+    // Cola principal: un comando que nadie consume en 30 s expira y va a la DLQ;
+    // si la cola supera los 1000 mensajes, los más antiguos también van a la DLQ.
+    private Queue mainQueue(String name, String deadLetterRoutingKey) {
+        return QueueBuilder.durable(name)
+                .ttl(30_000)
+                .maxLength(1000)
+                .deadLetterExchange("cmd.dead.dlx")
+                .deadLetterRoutingKey(deadLetterRoutingKey)
+                .build();
+    }
+
+    // DLQ: conserva los mensajes fallidos 24 h para análisis y luego los borra.
+    private Queue deadLetterQueue(String name) {
+        return QueueBuilder.durable(name)
+                .ttl(86_400_000)
+                .build();
     }
 }
