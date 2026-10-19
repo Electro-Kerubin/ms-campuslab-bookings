@@ -59,6 +59,12 @@ spring:
           issuer-uri: https://login.microsoftonline.com/${TENANT_ID:changeme}/v2.0
 
 campuslab:
+  # ms-campuslab-catalog: al aprobar / devolver / cancelar una reserva se mueve el stock del equipo allá.
+  catalog:
+    base-url: ${CATALOG_URL:http://localhost:8082}
+    connect-timeout: 2s
+    read-timeout: 5s
+
   # ---------------------------------------------------------------------------
   # Topología RabbitMQ: ÚNICO lugar donde se definen nombres de exchanges, colas
   # y routing keys. El código Java (config y productor) los lee de aquí; no hay

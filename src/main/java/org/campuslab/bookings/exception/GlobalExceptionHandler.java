@@ -49,6 +49,18 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage());
     }
 
+    // El equipo no tiene unidades disponibles, no se puede aprobar -> 409
+    @ExceptionHandler(InsufficientStockException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientStock(InsufficientStockException ex) {
+        return build(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    // El catálogo no respondió y el stock no se pudo mover; la reserva conserva su estado -> 503
+    @ExceptionHandler(CatalogUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleCatalogUnavailable(CatalogUnavailableException ex) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
     // Validaciones de DTO (@NotNull, @Email, etc.) -> 400 con detalle por campo
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
