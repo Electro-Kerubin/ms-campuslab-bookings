@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.campuslab.bookings.entity.Booking;
 import org.campuslab.bookings.entity.BookingStatus;
+import org.campuslab.bookings.security.Actor;
+import org.campuslab.bookings.security.ActorProvider;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +25,7 @@ public class BookingEventProducer {
     public static final String TOPIC = "bookings.events";
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ActorProvider actorProvider;
 
     // Publica un evento del tipo "BOOKING_<NUEVO_ESTADO>" con los datos de la reserva
     //
@@ -38,6 +41,13 @@ public class BookingEventProducer {
         payload.put("status", nuevoEstado.name());
         payload.put("startTime", booking.getStartTime().toString());
         payload.put("endTime", booking.getEndTime().toString());
+
+        // Quién ejecutó la acción y desde dónde: lo necesita ms-campuslab-audit (trazabilidad)
+        Actor actor = currentActor();
+        payload.put("actorEmail", actor.email());
+        payload.put("actorName", actor.name());
+        payload.put("actorRole", actor.role());
+        payload.put("clientIp", actor.ip());
 
         EventEnvelope envelope = EventEnvelope.of("BOOKING_" + nuevoEstado.name(), payload);
 
@@ -56,6 +66,16 @@ public class BookingEventProducer {
             // metadata del cluster dentro de max.block.ms).
             log.warn("No se pudo encolar evento Kafka (bookingId={}, type={}): {}",
                     booking.getId(), envelope.type(), ex.getMessage());
+        }
+    }
+
+    // Igual que el envío a Kafka, identificar al usuario no puede tumbar la operación de negocio
+    private Actor currentActor() {
+        try {
+            return actorProvider.current();
+        } catch (Exception ex) {
+            log.warn("No se pudo identificar al usuario del evento: {}", ex.getMessage());
+            return Actor.unknown();
         }
     }
 }

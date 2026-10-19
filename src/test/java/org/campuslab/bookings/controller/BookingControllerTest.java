@@ -2,6 +2,8 @@ package org.campuslab.bookings.controller;
 
 import org.campuslab.bookings.dto.BookingResponse;
 import org.campuslab.bookings.entity.BookingStatus;
+import org.campuslab.bookings.exception.CatalogUnavailableException;
+import org.campuslab.bookings.exception.InsufficientStockException;
 import org.campuslab.bookings.exception.InvalidStatusTransitionException;
 import org.campuslab.bookings.exception.ResourceNotFoundException;
 import org.campuslab.bookings.security.SecurityConfig;
@@ -207,6 +209,33 @@ class BookingControllerTest {
                         .content("{\"status\": \"EN_USO\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").exists());
+    }
+
+    @Test
+    void aprobar_sinStockDelEquipo_retorna409ConElMensajeDelCatalogo() throws Exception {
+        when(service.updateStatus(1L, BookingStatus.APROBADA))
+                .thenThrow(new InsufficientStockException("No hay stock disponible de 'Microscopio' (0 de 3)"));
+
+        mockMvc.perform(put("/api/bookings/1/status")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_TECNICO")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"APROBADA\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("No hay stock disponible de 'Microscopio' (0 de 3)"));
+    }
+
+    @Test
+    void cambiarEstado_conElCatalogoCaido_retorna503() throws Exception {
+        when(service.updateStatus(1L, BookingStatus.APROBADA))
+                .thenThrow(new CatalogUnavailableException("No se pudo actualizar el stock del equipo en el catálogo",
+                        new RuntimeException("connection refused")));
+
+        mockMvc.perform(put("/api/bookings/1/status")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_TECNICO")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"APROBADA\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value("No se pudo actualizar el stock del equipo en el catálogo"));
     }
 
     @Test

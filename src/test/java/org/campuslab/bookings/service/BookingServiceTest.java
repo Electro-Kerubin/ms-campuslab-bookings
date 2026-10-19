@@ -1,9 +1,12 @@
 package org.campuslab.bookings.service;
 
+import org.campuslab.bookings.client.CatalogStockClient;
 import org.campuslab.bookings.dto.BookingRequest;
 import org.campuslab.bookings.dto.BookingResponse;
 import org.campuslab.bookings.entity.Booking;
 import org.campuslab.bookings.entity.BookingStatus;
+import org.campuslab.bookings.exception.CatalogUnavailableException;
+import org.campuslab.bookings.exception.InsufficientStockException;
 import org.campuslab.bookings.exception.InvalidStatusTransitionException;
 import org.campuslab.bookings.exception.ResourceNotFoundException;
 import org.campuslab.bookings.mapper.BookingMapper;
@@ -14,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -42,12 +46,15 @@ class BookingServiceTest {
     @Mock
     private BookingCommandProducer rabbitProducer;
 
+    @Mock
+    private CatalogStockClient stockClient;
+
     private BookingService service;
 
     @BeforeEach
     void setUp() {
         // El mapper va real: es una clase simple sin dependencias externas
-        service = new BookingService(repository, new BookingMapper(), kafkaProducer, rabbitProducer);
+        service = new BookingService(repository, new BookingMapper(), kafkaProducer, rabbitProducer, stockClient);
     }
 
     // ---------- Helpers para no repetir código en cada test ----------
@@ -201,6 +208,128 @@ class BookingServiceTest {
         verify(rabbitProducer).sendEmailCommand(booking, "Tu reserva fue CANCELADA");
     }
 
+    // ---------- STOCK DEL EQUIPO (ms-catalog): se toma al aprobar y se devuelve al devolver / cancelar ----------
+
+    @Test
+    void aprobarReserva_tomaUnaUnidadDelEquipoAntesDeAvisarANadie() {
+        Booking booking = reserva(BookingStatus.SOLICITADA);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+
+        service.updateStatus(1L, BookingStatus.APROBADA);
+
+        // Primero el stock, después el evento y el correo: si el stock falla, no sale nada
+        InOrder orden = inOrder(stockClient, kafkaProducer, rabbitProducer);
+        orden.verify(stockClient).hold(10L, 1L);
+        orden.verify(kafkaProducer).publishBookingEvent(booking, BookingStatus.APROBADA);
+        orden.verify(rabbitProducer).sendEmailCommand(booking, "Tu reserva fue APROBADA");
+        verify(stockClient, never()).release(any(), any());
+    }
+
+    @Test
+    void aprobarReserva_sinStock_noSeApruebaYNoSalenEventosNiCorreos() {
+        Booking booking = reserva(BookingStatus.SOLICITADA);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+        doThrow(new InsufficientStockException("No hay stock disponible de 'Microscopio' (0 de 3)"))
+                .when(stockClient).hold(10L, 1L);
+
+        assertThatThrownBy(() -> service.updateStatus(1L, BookingStatus.APROBADA))
+                .isInstanceOf(InsufficientStockException.class)
+                .hasMessageContaining("No hay stock disponible");
+
+        // La excepción sale del método @Transactional: Spring revierte el cambio de estado
+        verifyNoInteractions(kafkaProducer, rabbitProducer);
+    }
+
+    @Test
+    void aprobarReserva_conElCatalogoCaido_noSeApruebaYNoSalenEventosNiCorreos() {
+        Booking booking = reserva(BookingStatus.SOLICITADA);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+        doThrow(new CatalogUnavailableException("catálogo caído", new RuntimeException("connection refused")))
+                .when(stockClient).hold(10L, 1L);
+
+        assertThatThrownBy(() -> service.updateStatus(1L, BookingStatus.APROBADA))
+                .isInstanceOf(CatalogUnavailableException.class);
+
+        verifyNoInteractions(kafkaProducer, rabbitProducer);
+    }
+
+    @Test
+    void devolverReserva_devuelveLaUnidadDelEquipo() {
+        Booking booking = reserva(BookingStatus.EN_USO);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+
+        service.updateStatus(1L, BookingStatus.DEVUELTA);
+
+        verify(stockClient).release(10L, 1L);
+        verify(stockClient, never()).hold(any(), any());
+    }
+
+    @Test
+    void devolverReserva_conElCatalogoCaido_noSeRegistraLaDevolucion() {
+        Booking booking = reserva(BookingStatus.EN_USO);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+        doThrow(new CatalogUnavailableException("catálogo caído", new RuntimeException("timeout")))
+                .when(stockClient).release(10L, 1L);
+
+        assertThatThrownBy(() -> service.updateStatus(1L, BookingStatus.DEVUELTA))
+                .isInstanceOf(CatalogUnavailableException.class);
+
+        verifyNoInteractions(kafkaProducer, rabbitProducer);
+    }
+
+    @Test
+    void cancelarReservaYaAprobada_devuelveLaUnidadQueTenia() {
+        for (BookingStatus conStockTomado : List.of(BookingStatus.APROBADA, BookingStatus.EN_PREPARACION)) {
+            reset(stockClient);
+            Booking booking = reserva(conStockTomado);
+            when(repository.findById(1L)).thenReturn(Optional.of(booking));
+            mockearSave();
+
+            service.updateStatus(1L, BookingStatus.CANCELADA);
+
+            verify(stockClient).release(10L, 1L);
+        }
+    }
+
+    @Test
+    void cancelarReservaSolicitada_noTocaElStockPorqueNuncaTomoNada() {
+        Booking booking = reserva(BookingStatus.SOLICITADA);
+        when(repository.findById(1L)).thenReturn(Optional.of(booking));
+        mockearSave();
+
+        service.updateStatus(1L, BookingStatus.CANCELADA);
+
+        verifyNoInteractions(stockClient);
+        verify(rabbitProducer).sendEmailCommand(booking, "Tu reserva fue CANCELADA");
+    }
+
+    @Test
+    void pasosIntermedios_noTocanElStock() {
+        // APROBADA -> EN_PREPARACION -> EN_USO: la unidad ya está tomada, no hay nada que mover
+        Booking aprobada = reserva(BookingStatus.APROBADA);
+        when(repository.findById(1L)).thenReturn(Optional.of(aprobada));
+        mockearSave();
+        service.updateStatus(1L, BookingStatus.EN_PREPARACION);
+
+        service.updateStatus(1L, BookingStatus.EN_USO);
+
+        verifyNoInteractions(stockClient);
+    }
+
+    @Test
+    void crearReserva_noTocaElStockHastaQueSeApruebe() {
+        mockearSave();
+
+        service.create(request("juan@uni.cl"), null);
+
+        verifyNoInteractions(stockClient);
+    }
+
     // ---------- MÁQUINA DE ESTADOS: transiciones inválidas (regla clave del negocio) ----------
 
     @Test
@@ -214,7 +343,7 @@ class BookingServiceTest {
 
         // Nada se guarda ni se publica cuando la transición es inválida
         verify(repository, never()).save(any());
-        verifyNoInteractions(kafkaProducer, rabbitProducer);
+        verifyNoInteractions(kafkaProducer, rabbitProducer, stockClient);
     }
 
     @Test
