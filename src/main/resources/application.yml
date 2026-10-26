@@ -59,43 +59,55 @@ spring:
           issuer-uri: https://login.microsoftonline.com/${TENANT_ID:changeme}/v2.0
 
 campuslab:
-  # Nombres de la topología RabbitMQ (única fuente en el servicio, ver RabbitNamesProperties).
-  # ms-campuslab-notify tiene este mismo bloque: si se cambia un nombre, cambiarlo en los dos.
-  rabbit:
+  # ms-campuslab-catalog: al aprobar / devolver / cancelar una reserva se mueve el stock del equipo allá.
+  catalog:
+    base-url: ${CATALOG_URL:http://localhost:8082}
+    connect-timeout: 2s
+    read-timeout: 5s
+
+  # ---------------------------------------------------------------------------
+  # Topología RabbitMQ: ÚNICO lugar donde se definen nombres de exchanges, colas
+  # y routing keys. El código Java (config y productor) los lee de aquí; no hay
+  # nombres escritos a mano.
+  #
+  # IMPORTANTE: este bloque debe ser IDÉNTICO en ms-campuslab-notify (que también
+  # declara la topología). RabbitMQ rechaza redeclarar una cola con argumentos
+  # distintos (PRECONDITION_FAILED).
+  # ---------------------------------------------------------------------------
+  messaging:
     exchanges:
-      direct: cmd.direct           # comandos con routing key exacta (el que usa el productor)
-      topic: cmd.topic             # comandos por patrón
-      dead-letter: cmd.dead.dlx    # destino de los mensajes rechazados o expirados
-    # Email/push al estudiante
-    email:
-      queue: q.cmd.email
-      dead-letter-queue: q.cmd.email.dlq
-      routing-key: email.send
-      topic-pattern: "email.*"
-      dead-letter-routing-key: email.dlq
-    # Ticket de preparación de sala/equipo para el técnico
-    prep:
-      queue: q.cmd.prep
-      dead-letter-queue: q.cmd.prep.dlq
-      routing-key: prep.ticket
-      topic-pattern: "prep.#"
-      dead-letter-routing-key: prep.dlq
-    # PDF de vale de retiro / acta de devolución
-    voucher:
-      queue: q.cmd.voucher
-      dead-letter-queue: q.cmd.voucher.dlq
-      routing-key: voucher.gen
-      topic-pattern: "voucher.*"
-      dead-letter-routing-key: voucher.dlq
+      direct: cmd.direct
+      topic: cmd.topic
+      dead-letter: cmd.dead.dlx
+    queues:
+      email:
+        name: q.cmd.email
+        dlq: q.cmd.email.dlq
+        direct-routing-key: email.send
+        topic-routing-key: "email.*"
+        dlq-routing-key: email.dlq
+      prep:
+        name: q.cmd.prep
+        dlq: q.cmd.prep.dlq
+        direct-routing-key: prep.ticket
+        topic-routing-key: "prep.#"
+        dlq-routing-key: prep.dlq
+      voucher:
+        name: q.cmd.voucher
+        dlq: q.cmd.voucher.dlq
+        direct-routing-key: voucher.gen
+        topic-routing-key: "voucher.*"
+        dlq-routing-key: voucher.dlq
+    retention:
+      queue-ttl-ms: 30000        # un comando que nadie consume en 30 s expira y va a la DLQ
+      queue-max-length: 1000     # sobre 1000 mensajes, los más antiguos van a la DLQ
+      dlq-ttl-ms: 86400000       # la DLQ conserva los fallidos 24 h para análisis
+    idempotency:
+      max-tracked-events: 10000  # lo usa notify (consumidor); aquí solo mantiene el bloque idéntico
 
 # Puerto del servicio (el BFF usa 8080; cada microservicio toma uno distinto)
 server:
   port: ${SERVER_PORT:8081}
-
-# Cliente hacia ms-campuslab-catalog (validar recursos y mover stock)
-campuslab:
-  catalog:
-    url: ${CATALOG_URL:http://localhost:8082}
 
 # Logs informativos para desarrollo
 logging:

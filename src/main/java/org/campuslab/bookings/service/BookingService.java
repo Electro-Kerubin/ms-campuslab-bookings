@@ -2,7 +2,7 @@ package org.campuslab.bookings.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.campuslab.bookings.client.CatalogClient;
+import org.campuslab.bookings.client.CatalogStockClient;
 import org.campuslab.bookings.dto.BookingRequest;
 import org.campuslab.bookings.dto.BookingResponse;
 import org.campuslab.bookings.entity.Booking;
@@ -27,6 +27,7 @@ import java.util.Set;
  * Lógica de negocio de reservas:
  * - crear y consultar reservas
  * - cambiar de estado respetando la máquina de estados
+ * - mover el stock del equipo en ms-catalog al aprobar / devolver / cancelar
  * - publicar eventos a Kafka y comandos a RabbitMQ según lo que pasó
  */
 @Service
@@ -38,12 +39,16 @@ public class BookingService {
     private final BookingMapper mapper;
     private final BookingEventProducer kafkaProducer;
     private final BookingCommandProducer rabbitProducer;
-    private final CatalogClient catalogClient;
+    private final CatalogStockClient stockClient;
 
     // Estados en los que una reserva ocupa el recurso (los finales lo liberan)
     private static final List<BookingStatus> ESTADOS_ACTIVOS =
             List.of(BookingStatus.SOLICITADA, BookingStatus.APROBADA,
                     BookingStatus.EN_PREPARACION, BookingStatus.EN_USO);
+
+    // Estados en los que la reserva ya tomó su unidad de stock (desde APROBADA hasta antes de devolverla)
+    private static final Set<BookingStatus> ESTADOS_CON_STOCK_TOMADO =
+            EnumSet.of(BookingStatus.APROBADA, BookingStatus.EN_PREPARACION, BookingStatus.EN_USO);
 
     // Transiciones válidas de la máquina de estados (quién puede ir a dónde)
     private static final Map<BookingStatus, Set<BookingStatus>> TRANSICIONES_VALIDAS = Map.of(
@@ -73,7 +78,7 @@ public class BookingService {
 
         // El recurso debe existir realmente en ms-catalog (antes se aceptaban
         // reservas de recursos inexistentes y quedaban como datos basura)
-        if (!catalogClient.resourceExists(request.resourceId())) {
+        if (!stockClient.exists(request.resourceId())) {
             throw new ResourceNotFoundException(
                     "El recurso " + request.resourceId() + " no existe en el catálogo");
         }
@@ -136,18 +141,16 @@ public class BookingService {
         booking.setUpdatedAt(LocalDateTime.now());
         Booking actualizada = repository.save(booking);
 
+        // 0) Stock del equipo en ms-catalog. Va ANTES de avisar a nadie: si no hay unidades (409) o el
+        //    catálogo no responde (503) la excepción revierte la transacción y no sale ningún evento ni correo.
+        moverStockDelEquipo(actualizada, actual, nuevoEstado);
+
         // 1) Evento a Kafka: fuente de verdad para reportería y auditoría
         kafkaProducer.publishBookingEvent(actualizada, nuevoEstado);
 
         // 2) Comandos a RabbitMQ según el nuevo estado (notificaciones y vouchers)
-        //    + movimiento de stock en ms-catalog para los estados que ocupan/liberan
         switch (nuevoEstado) {
-            case APROBADA -> {
-                // La reserva aprobada toma 1 unidad del stock del equipo
-                // (idempotente por reserva; si catalog no responde no se tumba el flujo)
-                catalogClient.holdStock(actualizada.getResourceId(), actualizada.getId());
-                rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue APROBADA");
-            }
+            case APROBADA -> rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue APROBADA");
             case EN_PREPARACION -> {
                 // El técnico recibe su ticket de preparación de sala/equipo
                 rabbitProducer.sendPrepTicketCommand(actualizada);
@@ -157,15 +160,10 @@ public class BookingService {
                 rabbitProducer.sendVoucherCommand(actualizada, "VALE_RETIRO");
             }
             case DEVUELTA -> {
-                // La unidad vuelve al stock del equipo
-                catalogClient.releaseStock(actualizada.getResourceId(), actualizada.getId());
                 rabbitProducer.sendEmailCommand(actualizada, "Devolución registrada. Gracias");
                 rabbitProducer.sendVoucherCommand(actualizada, "ACTA_DEVOLUCION");
             }
             case CANCELADA -> {
-                // Si la reserva había tomado stock (venía aprobada), se libera;
-                // si nunca lo tomó, el release es no-op (idempotente)
-                catalogClient.releaseStock(actualizada.getResourceId(), actualizada.getId());
                 rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue CANCELADA");
             }
             default -> { /* SOLICITADA no aplica aquí: es el estado inicial */ }
@@ -173,6 +171,22 @@ public class BookingService {
 
         log.info("Reserva {} cambió de {} a {}", id, actual, nuevoEstado);
         return mapper.toResponse(actualizada);
+    }
+
+    /**
+     * Una reserva aprobada tiene tomada 1 unidad del equipo hasta que se devuelve o se cancela:
+     *  - SOLICITADA -> APROBADA: toma la unidad (sin unidades, no se aprueba)
+     *  - -> DEVUELTA, o -> CANCELADA habiendo sido aprobada: la devuelve
+     *  - SOLICITADA -> CANCELADA nunca tomó nada, no hay qué devolver
+     * ms-catalog decide qué recursos descuentan stock (hoy solo los equipos) y es idempotente por reserva.
+     */
+    private void moverStockDelEquipo(Booking booking, BookingStatus desde, BookingStatus hacia) {
+        if (hacia == BookingStatus.APROBADA) {
+            stockClient.hold(booking.getResourceId(), booking.getId());
+        } else if (hacia == BookingStatus.DEVUELTA
+                || (hacia == BookingStatus.CANCELADA && ESTADOS_CON_STOCK_TOMADO.contains(desde))) {
+            stockClient.release(booking.getResourceId(), booking.getId());
+        }
     }
 
     // Busca la reserva o lanza la excepción que el handler convierte en 404

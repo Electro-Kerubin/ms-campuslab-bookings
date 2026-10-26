@@ -2,7 +2,7 @@ package org.campuslab.bookings.messaging.producer;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.campuslab.bookings.config.RabbitNamesProperties;
+import org.campuslab.bookings.config.MessagingProperties;
 import org.campuslab.bookings.entity.Booking;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
@@ -11,11 +11,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Publica comandos a RabbitMQ en el exchange direct (campuslab.rabbit.exchanges.direct).
+ * Publica comandos a RabbitMQ usando el exchange direct (campuslab.messaging.exchanges.direct).
  * Los consumidores de ms-campuslab-notify reciben estos comandos para:
- * - enviar email al estudiante (campuslab.rabbit.email.routing-key)
- * - crear ticket de preparación al técnico (campuslab.rabbit.prep.routing-key)
- * - generar PDF de vale/acta (campuslab.rabbit.voucher.routing-key)
+ * - enviar email al estudiante (routing key de la cola email)
+ * - crear ticket de preparación al técnico (routing key de la cola prep)
+ * - generar PDF de vale/acta (routing key de la cola voucher)
+ * Exchange y routing keys vienen de application.yml, no están escritos aquí.
  */
 @Component
 @RequiredArgsConstructor
@@ -23,7 +24,7 @@ import java.util.Map;
 public class BookingCommandProducer {
 
     private final RabbitTemplate rabbitTemplate;
-    private final RabbitNamesProperties names;
+    private final MessagingProperties properties;
 
     // Comando: notificar por email al estudiante un cambio de estado de su reserva
     public void sendEmailCommand(Booking booking, String motivo) {
@@ -33,7 +34,7 @@ public class BookingCommandProducer {
         payload.put("status", booking.getStatus().name());
         payload.put("motivo", motivo);
 
-        publish(names.email().routingKey(), payload);
+        publish(properties.queues().email().directRoutingKey(), payload);
     }
 
     // Comando: generar ticket de preparación de sala para el técnico
@@ -44,7 +45,7 @@ public class BookingCommandProducer {
         payload.put("startTime", booking.getStartTime().toString());
         payload.put("studentEmail", booking.getStudentEmail());
 
-        publish(names.prep().routingKey(), payload);
+        publish(properties.queues().prep().directRoutingKey(), payload);
     }
 
     // Comando: generar PDF (vale de retiro o acta de devolución)
@@ -54,7 +55,7 @@ public class BookingCommandProducer {
         payload.put("tipo", tipoVoucher);
         payload.put("studentEmail", booking.getStudentEmail());
 
-        publish(names.voucher().routingKey(), payload);
+        publish(properties.queues().voucher().directRoutingKey(), payload);
     }
 
     // Método común: envuelve el payload en el envelope (type = routing key) y publica al exchange
@@ -62,7 +63,7 @@ public class BookingCommandProducer {
     // Best-effort: igual que con Kafka, si RabbitMQ no está disponible no
     // debe tumbar el cambio de estado de la reserva que lo disparó.
     private void publish(String routingKey, Map<String, Object> payload) {
-        String exchange = names.exchanges().direct();
+        String exchange = properties.exchanges().direct();
         try {
             rabbitTemplate.convertAndSend(exchange, routingKey, EventEnvelope.of(routingKey, payload));
             log.info("Comando RabbitMQ enviado a {} con routingKey={}", exchange, routingKey);
