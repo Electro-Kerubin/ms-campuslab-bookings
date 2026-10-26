@@ -62,6 +62,11 @@ spring:
 server:
   port: ${SERVER_PORT:8081}
 
+# Cliente hacia ms-campuslab-catalog (validar recursos y mover stock)
+campuslab:
+  catalog:
+    url: ${CATALOG_URL:http://localhost:8082}
+
 # Logs informativos para desarrollo
 logging:
   level:

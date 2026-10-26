@@ -49,6 +49,18 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage());
     }
 
+    // Solapamiento de horarios con otra reserva activa -> 409
+    @ExceptionHandler(BookingOverlapException.class)
+    public ResponseEntity<Map<String, Object>> handleOverlap(BookingOverlapException ex) {
+        return build(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    // Dependencia no disponible (ej: catálogo caído al validar un recurso) -> 503
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, Object>> handleDependencyUnavailable(IllegalStateException ex) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
     // Validaciones de DTO (@NotNull, @Email, etc.) -> 400 con detalle por campo
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {

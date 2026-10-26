@@ -1,5 +1,6 @@
 package org.campuslab.bookings.service;
 
+import org.campuslab.bookings.client.CatalogClient;
 import org.campuslab.bookings.dto.BookingRequest;
 import org.campuslab.bookings.dto.BookingResponse;
 import org.campuslab.bookings.entity.Booking;
@@ -42,12 +43,16 @@ class BookingServiceTest {
     @Mock
     private BookingCommandProducer rabbitProducer;
 
+    @Mock
+    private CatalogClient catalogClient;
+
     private BookingService service;
 
     @BeforeEach
     void setUp() {
         // El mapper va real: es una clase simple sin dependencias externas
-        service = new BookingService(repository, new BookingMapper(), kafkaProducer, rabbitProducer);
+        org.mockito.Mockito.lenient().when(catalogClient.resourceExists(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+        service = new BookingService(repository, new BookingMapper(), kafkaProducer, rabbitProducer, catalogClient);
     }
 
     // ---------- Helpers para no repetir código en cada test ----------
@@ -55,8 +60,8 @@ class BookingServiceTest {
     private BookingRequest request(String email) {
         return new BookingRequest(
                 10L, email, "Práctica de física",
-                LocalDateTime.of(2026, 9, 10, 10, 0),
-                LocalDateTime.of(2026, 9, 10, 12, 0));
+                LocalDateTime.now().plusDays(1).withHour(10).withMinute(0),
+                LocalDateTime.now().plusDays(1).withHour(12).withMinute(0));
     }
 
     private Booking reserva(BookingStatus status) {
@@ -65,8 +70,8 @@ class BookingServiceTest {
                 .resourceId(10L)
                 .studentEmail("juan@uni.cl")
                 .purpose("Práctica de física")
-                .startTime(LocalDateTime.of(2026, 9, 10, 10, 0))
-                .endTime(LocalDateTime.of(2026, 9, 10, 12, 0))
+                .startTime(LocalDateTime.now().plusDays(1).withHour(10).withMinute(0))
+                .endTime(LocalDateTime.now().plusDays(1).withHour(12).withMinute(0))
                 .status(status)
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
@@ -97,8 +102,8 @@ class BookingServiceTest {
     void crearReserva_siEndTimeEsAnteriorAlStart_lanzaError() {
         BookingRequest mala = new BookingRequest(
                 10L, "juan@uni.cl", "Práctica",
-                LocalDateTime.of(2026, 9, 10, 12, 0),  // start 12:00
-                LocalDateTime.of(2026, 9, 10, 10, 0)); // end 10:00 (¡antes!)
+                LocalDateTime.now().plusDays(1).withHour(12).withMinute(0),  // start 12:00
+                LocalDateTime.now().plusDays(1).withHour(10).withMinute(0)); // end 10:00 (¡antes!)
 
         assertThatThrownBy(() -> service.create(mala, null))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -246,3 +251,5 @@ class BookingServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 }
+
+

@@ -2,10 +2,12 @@ package org.campuslab.bookings.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.campuslab.bookings.client.CatalogClient;
 import org.campuslab.bookings.dto.BookingRequest;
 import org.campuslab.bookings.dto.BookingResponse;
 import org.campuslab.bookings.entity.Booking;
 import org.campuslab.bookings.entity.BookingStatus;
+import org.campuslab.bookings.exception.BookingOverlapException;
 import org.campuslab.bookings.exception.InvalidStatusTransitionException;
 import org.campuslab.bookings.exception.ResourceNotFoundException;
 import org.campuslab.bookings.mapper.BookingMapper;
@@ -36,6 +38,12 @@ public class BookingService {
     private final BookingMapper mapper;
     private final BookingEventProducer kafkaProducer;
     private final BookingCommandProducer rabbitProducer;
+    private final CatalogClient catalogClient;
+
+    // Estados en los que una reserva ocupa el recurso (los finales lo liberan)
+    private static final List<BookingStatus> ESTADOS_ACTIVOS =
+            List.of(BookingStatus.SOLICITADA, BookingStatus.APROBADA,
+                    BookingStatus.EN_PREPARACION, BookingStatus.EN_USO);
 
     // Transiciones válidas de la máquina de estados (quién puede ir a dónde)
     private static final Map<BookingStatus, Set<BookingStatus>> TRANSICIONES_VALIDAS = Map.of(
@@ -56,6 +64,26 @@ public class BookingService {
         // Validación de negocio: el fin debe ser posterior al inicio
         if (!request.endTime().isAfter(request.startTime())) {
             throw new IllegalArgumentException("endTime debe ser posterior a startTime");
+        }
+
+        // Validación de negocio: no se reservan horarios que ya pasaron
+        if (request.startTime().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("startTime no puede estar en el pasado");
+        }
+
+        // El recurso debe existir realmente en ms-catalog (antes se aceptaban
+        // reservas de recursos inexistentes y quedaban como datos basura)
+        if (!catalogClient.resourceExists(request.resourceId())) {
+            throw new ResourceNotFoundException(
+                    "El recurso " + request.resourceId() + " no existe en el catálogo");
+        }
+
+        // Un mismo recurso no puede tener dos reservas activas que se solapen
+        if (repository.existsOverlappingActive(
+                request.resourceId(), request.startTime(), request.endTime(), ESTADOS_ACTIVOS)) {
+            throw new BookingOverlapException(
+                    "El recurso " + request.resourceId() + " ya tiene una reserva activa "
+                            + "que se solapa con ese horario");
         }
 
         // Prioridad: lo que envía el body, si no, el email del token
@@ -112,9 +140,12 @@ public class BookingService {
         kafkaProducer.publishBookingEvent(actualizada, nuevoEstado);
 
         // 2) Comandos a RabbitMQ según el nuevo estado (notificaciones y vouchers)
+        //    + movimiento de stock en ms-catalog para los estados que ocupan/liberan
         switch (nuevoEstado) {
             case APROBADA -> {
-                // Nota: aquí ms-catalog debería descontar stock/cupo del recurso
+                // La reserva aprobada toma 1 unidad del stock del equipo
+                // (idempotente por reserva; si catalog no responde no se tumba el flujo)
+                catalogClient.holdStock(actualizada.getResourceId(), actualizada.getId());
                 rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue APROBADA");
             }
             case EN_PREPARACION -> {
@@ -126,10 +157,17 @@ public class BookingService {
                 rabbitProducer.sendVoucherCommand(actualizada, "VALE_RETIRO");
             }
             case DEVUELTA -> {
+                // La unidad vuelve al stock del equipo
+                catalogClient.releaseStock(actualizada.getResourceId(), actualizada.getId());
                 rabbitProducer.sendEmailCommand(actualizada, "Devolución registrada. Gracias");
                 rabbitProducer.sendVoucherCommand(actualizada, "ACTA_DEVOLUCION");
             }
-            case CANCELADA -> rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue CANCELADA");
+            case CANCELADA -> {
+                // Si la reserva había tomado stock (venía aprobada), se libera;
+                // si nunca lo tomó, el release es no-op (idempotente)
+                catalogClient.releaseStock(actualizada.getResourceId(), actualizada.getId());
+                rabbitProducer.sendEmailCommand(actualizada, "Tu reserva fue CANCELADA");
+            }
             default -> { /* SOLICITADA no aplica aquí: es el estado inicial */ }
         }
 

@@ -29,4 +29,21 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findByFilters(@Param("status") BookingStatus status,
                                 @Param("from") LocalDateTime from,
                                 @Param("to") LocalDateTime to);
+
+    /**
+     * true si el recurso ya tiene una reserva ACTIVA (SOLICITADA, APROBADA,
+     * EN_PREPARACION o EN_USO) cuyo horario se solapa con [start, end).
+     * DEVUELTA y CANCELADA no cuentan: el recurso quedó libre.
+     */
+    @Query("""
+            SELECT COUNT(b) > 0 FROM Booking b
+            WHERE b.resourceId = :resourceId
+              AND b.status IN :activeStatuses
+              AND b.startTime < :end
+              AND b.endTime > :start
+            """)
+    boolean existsOverlappingActive(@Param("resourceId") Long resourceId,
+                                    @Param("start") LocalDateTime start,
+                                    @Param("end") LocalDateTime end,
+                                    @Param("activeStatuses") java.util.Collection<BookingStatus> activeStatuses);
 }
