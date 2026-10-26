@@ -58,6 +58,36 @@ spring:
           # Se configura por variable de entorno (TENANT_ID de Azure AD)
           issuer-uri: https://login.microsoftonline.com/${TENANT_ID:changeme}/v2.0
 
+campuslab:
+  # Nombres de la topología RabbitMQ (única fuente en el servicio, ver RabbitNamesProperties).
+  # ms-campuslab-notify tiene este mismo bloque: si se cambia un nombre, cambiarlo en los dos.
+  rabbit:
+    exchanges:
+      direct: cmd.direct           # comandos con routing key exacta (el que usa el productor)
+      topic: cmd.topic             # comandos por patrón
+      dead-letter: cmd.dead.dlx    # destino de los mensajes rechazados o expirados
+    # Email/push al estudiante
+    email:
+      queue: q.cmd.email
+      dead-letter-queue: q.cmd.email.dlq
+      routing-key: email.send
+      topic-pattern: "email.*"
+      dead-letter-routing-key: email.dlq
+    # Ticket de preparación de sala/equipo para el técnico
+    prep:
+      queue: q.cmd.prep
+      dead-letter-queue: q.cmd.prep.dlq
+      routing-key: prep.ticket
+      topic-pattern: "prep.#"
+      dead-letter-routing-key: prep.dlq
+    # PDF de vale de retiro / acta de devolución
+    voucher:
+      queue: q.cmd.voucher
+      dead-letter-queue: q.cmd.voucher.dlq
+      routing-key: voucher.gen
+      topic-pattern: "voucher.*"
+      dead-letter-routing-key: voucher.dlq
+
 # Puerto del servicio (el BFF usa 8080; cada microservicio toma uno distinto)
 server:
   port: ${SERVER_PORT:8081}
