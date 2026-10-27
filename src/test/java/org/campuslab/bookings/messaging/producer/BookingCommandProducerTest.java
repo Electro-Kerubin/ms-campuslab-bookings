@@ -39,7 +39,7 @@ class BookingCommandProducerTest {
                         new Flow("q.b", "q.b.dlq", "b.ticket", "b.#", "b.dlq"),
                         new Flow("q.c", "q.c.dlq", "c.gen", "c.*", "c.dlq")),
                 new Retention(1, 1, 1),
-                new Idempotency(1));
+                new Idempotency(1), "classic");
         producer = new BookingCommandProducer(rabbitTemplate, properties);
     }
 
