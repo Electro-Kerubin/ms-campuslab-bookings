@@ -47,6 +47,9 @@ spring:
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
+    # Varios nodos del clúster, separados por coma (host1:5672,host2:5672). Si se define, reemplaza a host/port
+    # y el cliente se reconecta solo al siguiente nodo cuando uno cae.
+    addresses: ${RABBITMQ_ADDRESSES:}
     username: ${RABBITMQ_USER:campuslab}
     password: ${RABBITMQ_PASSWORD:campuslab}
 
@@ -104,6 +107,9 @@ campuslab:
       dlq-ttl-ms: 86400000       # la DLQ conserva los fallidos 24 h para análisis
     idempotency:
       max-tracked-events: 10000  # lo usa notify (consumidor); aquí solo mantiene el bloque idéntico
+    # classic: cada cola vive en UN nodo del clúster. quorum: réplicas en varios nodos (tolera la caída de uno
+    # solo con 3 o más nodos). Cambiarlo exige borrar antes las colas ya declaradas. Idéntico en notify y bookings.
+    queue-type: ${RABBITMQ_QUEUE_TYPE:classic}
 
 # Puerto del servicio (el BFF usa 8080; cada microservicio toma uno distinto)
 server:

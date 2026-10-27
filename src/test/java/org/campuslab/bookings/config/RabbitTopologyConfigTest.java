@@ -28,7 +28,7 @@ class RabbitTopologyConfigTest {
             new Exchanges("x.direct", "x.topic", "x.dead"),
             new Queues(EMAIL, PREP, VOUCHER),
             new Retention(1234, 99, 5678),
-            new Idempotency(10)));
+            new Idempotency(10), "classic"));
 
     @Test
     void losExchangesTomanSuNombreDeLasPropiedades() {
@@ -116,5 +116,58 @@ class RabbitTopologyConfigTest {
         assertThat(binding.getDestination()).isEqualTo(queue);
         assertThat(binding.getExchange()).isEqualTo(exchange);
         assertThat(binding.getRoutingKey()).isEqualTo(routingKey);
+    }
+
+    // ---------- Alta disponibilidad: tipo de cola y varios nodos (idéntico a notify) ----------
+
+    @org.springframework.boot.context.properties.EnableConfigurationProperties(
+            org.springframework.boot.autoconfigure.amqp.RabbitProperties.class)
+    static class RabbitPropertiesConfig {
+    }
+
+    private ApplicationContextRunner realYml() {
+        return new ApplicationContextRunner()
+                .withInitializer(new ConfigDataApplicationContextInitializer())
+                .withUserConfiguration(RabbitTopologyConfig.class);
+    }
+
+    @Test
+    void porDefectoLasColasSonClassicYSinArgumentoDeTipo() {
+        realYml().run(context -> {
+            assertThat(context.getBean(MessagingProperties.class).quorum()).isFalse();
+            context.getBeansOfType(Queue.class).values()
+                    .forEach(q -> assertThat(q.getArguments()).doesNotContainKey("x-queue-type"));
+        });
+    }
+
+    @Test
+    void conQueueTypeQuorumTodasLasColasIncluidasLasDlqSeDeclaranQuorum() {
+        realYml().withPropertyValues("campuslab.messaging.queue-type=quorum").run(context -> {
+            assertThat(context.getBeansOfType(Queue.class)).hasSize(6);
+            context.getBeansOfType(Queue.class).values()
+                    .forEach(q -> assertThat(q.getArguments()).containsEntry("x-queue-type", "quorum"));
+        });
+    }
+
+    @Test
+    void unTipoDeColaInvalidoImpideArrancar() {
+        realYml().withPropertyValues("campuslab.messaging.queue-type=mirrored")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void conRabbitmqAddressesElClienteConoceTodosLosNodosDelClusterEnOrden() {
+        realYml().withUserConfiguration(RabbitPropertiesConfig.class)
+                .withPropertyValues("spring.rabbitmq.addresses=nodo1:5672,nodo2:5672")
+                .run(context -> assertThat(context.getBean(org.springframework.boot.autoconfigure.amqp.RabbitProperties.class)
+                        .determineAddresses()).isEqualTo("nodo1:5672,nodo2:5672"));
+    }
+
+    @Test
+    void sinAddressesElClienteUsaHostYPuertoPorDefecto() {
+        realYml().withUserConfiguration(RabbitPropertiesConfig.class).run(context ->
+                // sin addresses, el cliente usa host:puerto (los valores dependen de RABBITMQ_HOST/RABBITMQ_PORT)
+                assertThat(context.getBean(org.springframework.boot.autoconfigure.amqp.RabbitProperties.class))
+                        .satisfies(p -> assertThat(p.determineAddresses()).isEqualTo(p.getHost() + ":" + p.getPort())));
     }
 }

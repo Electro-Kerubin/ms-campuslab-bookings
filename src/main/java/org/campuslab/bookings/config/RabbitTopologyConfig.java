@@ -167,7 +167,7 @@ public class RabbitTopologyConfig {
     // TIPO de cada argumento al redeclarar, y las colas ya existentes se declararon con enteros.
     @SuppressWarnings("deprecation")
     private Queue mainQueue(Flow flow) {
-        return QueueBuilder.durable(flow.name())
+        return durable(flow.name())
                 .ttl(properties.retention().queueTtlMs())
                 .maxLength(properties.retention().queueMaxLength())
                 .deadLetterExchange(properties.exchanges().deadLetter())
@@ -177,8 +177,14 @@ public class RabbitTopologyConfig {
 
     // DLQ: conserva los mensajes fallidos 24 h para análisis y luego los borra.
     private Queue deadLetterQueue(Flow flow) {
-        return QueueBuilder.durable(flow.dlq())
+        return durable(flow.dlq())
                 .ttl(properties.retention().dlqTtlMs())
                 .build();
+    }
+
+    // Cola durable del tipo configurado (campuslab.messaging.queue-type): classic o quorum
+    private QueueBuilder durable(String name) {
+        QueueBuilder builder = QueueBuilder.durable(name);
+        return properties.quorum() ? builder.quorum() : builder;
     }
 }

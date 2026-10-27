@@ -3,8 +3,10 @@ package org.campuslab.bookings.config;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 /**
@@ -22,8 +24,15 @@ public record MessagingProperties(
         @Valid @NotNull Exchanges exchanges,
         @Valid @NotNull Queues queues,
         @Valid @NotNull Retention retention,
-        @Valid @NotNull Idempotency idempotency
+        @Valid @NotNull Idempotency idempotency,
+        @NotBlank @Pattern(regexp = "classic|quorum", message = "queueType debe ser classic o quorum")
+        @DefaultValue("classic") String queueType
 ) {
+
+    /** true si las colas se declaran de tipo quorum (replicadas entre los nodos del clúster). */
+    public boolean quorum() {
+        return "quorum".equals(queueType);
+    }
 
     /** direct y topic reciben los comandos; deadLetter recibe los que fallan. */
     public record Exchanges(
