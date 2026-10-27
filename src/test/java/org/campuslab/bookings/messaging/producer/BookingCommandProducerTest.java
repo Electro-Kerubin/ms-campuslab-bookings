@@ -67,13 +67,65 @@ class BookingCommandProducerTest {
                 .containsEntry("resourceId", 3L);
     }
 
+    // Email y preparación son comandos punto a punto: exchange DIRECT con la clave exacta del caso de uso.
     @Test
-    void elComandoDeVoucherVaConLaRoutingKeyDeLaColaVoucher() {
+    void emailYPreparacionVanPorElExchangeDirect() {
+        producer.sendEmailCommand(reserva(), "x");
+        producer.sendPrepTicketCommand(reserva());
+
+        verify(rabbitTemplate).convertAndSend(org.mockito.ArgumentMatchers.eq("x.direct"),
+                org.mockito.ArgumentMatchers.eq("a.send"), any(Object.class));
+        verify(rabbitTemplate).convertAndSend(org.mockito.ArgumentMatchers.eq("x.direct"),
+                org.mockito.ArgumentMatchers.eq("b.ticket"), any(Object.class));
+        verify(rabbitTemplate, org.mockito.Mockito.never()).convertAndSend(
+                org.mockito.ArgumentMatchers.eq("x.topic"), anyString(), any(Object.class));
+    }
+
+    // El voucher tiene subtipos: va por el exchange TOPIC con la clave <prefijo del patrón>.<subtipo>.
+    @Test
+    void elValeDeRetiroVaPorElExchangeTopicConLaClaveDelSubtipo() {
         producer.sendVoucherCommand(reserva(), "VALE_RETIRO");
 
-        assertThat(published("x.direct", "c.gen").payload())
+        EventEnvelope envelope = published("x.topic", "c.retiro");
+        assertThat(envelope.type()).isEqualTo("c.retiro");
+        assertThat(envelope.payload())
                 .containsEntry("bookingId", 7L)
                 .containsEntry("tipo", "VALE_RETIRO");
+    }
+
+    @Test
+    void elActaDeDevolucionVaPorElExchangeTopicConSuPropiaClave() {
+        producer.sendVoucherCommand(reserva(), "ACTA_DEVOLUCION");
+
+        assertThat(published("x.topic", "c.devolucion").payload()).containsEntry("tipo", "ACTA_DEVOLUCION");
+    }
+
+    @Test
+    void laClaveTopicSeCalzaConElPatronDeLaColaVoucher() {
+        // Si el patrón de la cola no cubriera la clave que publica el productor, el comando se perdería
+        for (String tipo : new String[] {"VALE_RETIRO", "ACTA_DEVOLUCION"}) {
+            producer.sendVoucherCommand(reserva(), tipo);
+        }
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        verify(rabbitTemplate, org.mockito.Mockito.times(2)).convertAndSend(
+                org.mockito.ArgumentMatchers.eq("x.topic"), keys.capture(), any(Object.class));
+        // "c.*" = prefijo + exactamente una palabra
+        assertThat(keys.getAllValues()).allMatch(k -> k.matches("c\\.[^.]+"));
+    }
+
+    @Test
+    void siElPatronNoPermiteDerivarLaClaveSeUsaElDirectConLaClaveExacta() {
+        MessagingProperties conPatronAbierto = new MessagingProperties(
+                new Exchanges("x.direct", "x.topic", "x.dead"),
+                new Queues(
+                        new Flow("q.a", "q.a.dlq", "a.send", "a.*", "a.dlq"),
+                        new Flow("q.b", "q.b.dlq", "b.ticket", "b.#", "b.dlq"),
+                        new Flow("q.c", "q.c.dlq", "c.gen", "c.#", "c.dlq")),
+                new Retention(1, 1, 1),
+                new Idempotency(1), "classic");
+        new BookingCommandProducer(rabbitTemplate, conPatronAbierto).sendVoucherCommand(reserva(), "VALE_RETIRO");
+
+        assertThat(published("x.direct", "c.gen").payload()).containsEntry("tipo", "VALE_RETIRO");
     }
 
     @Test
