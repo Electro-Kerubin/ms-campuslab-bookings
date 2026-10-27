@@ -166,7 +166,8 @@ class RabbitTopologyConfigTest {
     @Test
     void sinAddressesElClienteUsaHostYPuertoPorDefecto() {
         realYml().withUserConfiguration(RabbitPropertiesConfig.class).run(context ->
-                assertThat(context.getBean(org.springframework.boot.autoconfigure.amqp.RabbitProperties.class)
-                        .determineAddresses()).isEqualTo("localhost:5672"));
+                // sin addresses, el cliente usa host:puerto (los valores dependen de RABBITMQ_HOST/RABBITMQ_PORT)
+                assertThat(context.getBean(org.springframework.boot.autoconfigure.amqp.RabbitProperties.class))
+                        .satisfies(p -> assertThat(p.determineAddresses()).isEqualTo(p.getHost() + ":" + p.getPort())));
     }
 }
